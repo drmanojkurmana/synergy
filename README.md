@@ -107,6 +107,10 @@ fleet-run     dispatcher for the external CLIs, plus `selftest`
 agents/       genius-fable, genius-opus, worker-sonnet definitions
 ```
 
+## License
+
+MIT - see [LICENSE](LICENSE).
+
 ## Not supported
 
 `pact` cannot orchestrate this fleet — its `--agent` is hardcoded to
