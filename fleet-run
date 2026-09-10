@@ -1,0 +1,51 @@
+#!/bin/bash
+# Dispatch a non-Claude agent CLI headless, for a Claude Code leader session to fan out to.
+# Claude tiers (fable/opus/sonnet) do NOT go through here - use the Agent tool with
+# subagent_type genius-fable / genius-opus / worker-sonnet instead.
+#
+#   fleet-run agy|muse <workdir> <prompt-file>   # prompt-file may be - for stdin
+#   fleet-run selftest
+#
+# Both agents run with approvals disabled: point <workdir> at a git worktree or scratch
+# dir you are fine with them editing freely, never a checkout with uncommitted work you need.
+set -uo pipefail
+
+AGY_TIMEOUT="${FLEET_TIMEOUT:-60m}"
+
+run_agy() {  # workdir, prompt-file
+  local dir="$1" pf="$2" prompt
+  prompt="$(cat -- "$pf")" || return 1
+  ( cd "$dir" && agy -p "$prompt" --project . --dangerously-skip-permissions --print-timeout "$AGY_TIMEOUT" )
+}
+
+run_muse() {  # workdir, prompt-file
+  local dir="$1" pf="$2"
+  muse exec --workspace "$dir" --prompt-file "$pf" --approval-mode never --user-input-auto-resolve
+}
+
+selftest() {
+  local tmp rc=0 out
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  printf 'Reply with exactly: READY' > "$tmp/p.txt"
+  for a in agy muse; do
+    out="$("run_$a" "$tmp" "$tmp/p.txt" 2>&1 | tail -1)"
+    if [[ "$out" == *READY* ]]; then echo "ok    $a"; else echo "FAIL  $a: $out"; rc=1; fi
+  done
+  for m in fable opus sonnet; do
+    out="$(claude -p 'Reply with exactly: READY' --model "$m" 2>&1 | tail -1)"
+    if [[ "$out" == *READY* ]]; then echo "ok    claude/$m"; else echo "FAIL  claude/$m: $out"; rc=1; fi
+  done
+  return $rc
+}
+
+case "${1-}" in
+  selftest) selftest ;;
+  agy|muse)
+    agent="$1"; dir="${2-}"; pf="${3-}"
+    [[ -d "$dir" ]] || { echo "fleet-run: not a directory: $dir" >&2; exit 2; }
+    [[ -n "$pf" ]] || { echo "fleet-run: missing prompt-file (use - for stdin)" >&2; exit 2; }
+    if [[ "$pf" == - ]]; then pf="$(mktemp)"; cat > "$pf"; trap 'rm -f "$pf"' EXIT; fi
+    [[ -r "$pf" ]] || { echo "fleet-run: cannot read prompt-file: $pf" >&2; exit 2; }
+    "run_$agent" "$dir" "$pf" ;;
+  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+esac
